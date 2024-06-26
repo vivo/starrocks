@@ -76,7 +76,7 @@ static const uint8_t VALID_SEL_OK = 0x1;
 // make sure the least bit is 1.
 static const uint8_t VALID_SEL_OK_AND_NULL = 0x3;
 
-namespace starrocks::stream_load {
+namespace starrocks {
 
 OlapTableSink::OlapTableSink(ObjectPool* pool, const std::vector<TExpr>& texprs, Status* status, RuntimeState* state)
         : _pool(pool), _rpc_http_min_size(state->get_rpc_http_min_size()) {
@@ -93,6 +93,7 @@ Status OlapTableSink::init(const TDataSink& t_sink, RuntimeState* state) {
     _load_id.set_hi(table_sink.load_id.hi);
     _load_id.set_lo(table_sink.load_id.lo);
     _txn_id = table_sink.txn_id;
+    _sink_id = t_sink.__isset.sink_id ? t_sink.sink_id : 0;
     _txn_trace_parent = table_sink.txn_trace_parent;
     _span = Tracer::Instance().start_trace_or_add_span("olap_table_sink", _txn_trace_parent);
     _num_repicas = table_sink.num_replicas;
@@ -136,6 +137,9 @@ Status OlapTableSink::init(const TDataSink& t_sink, RuntimeState* state) {
         _load_channel_timeout_s = config::streaming_load_rpc_max_alive_time_sec;
     }
 
+    if (table_sink.__isset.ignore_out_of_partition) {
+        _ignore_out_of_partition = table_sink.ignore_out_of_partition;
+    }
     _enable_automatic_partition = _vectorized_partition->enable_automatic_partition();
     if (_enable_automatic_partition) {
         _automatic_partition_token =
@@ -404,7 +408,7 @@ Status OlapTableSink::_automatic_create_partition() {
     request.__set_partition_values(_partition_not_exist_row_values);
 
     LOG(INFO) << "load_id=" << print_id(_load_id) << ", txn_id: " << std::to_string(_txn_id)
-              << "automatic partition rpc begin request " << request;
+              << " automatic partition rpc begin request " << request;
     TNetworkAddress master_addr = get_master_address();
     auto timeout_ms = _runtime_state->query_options().query_timeout * 1000 / 2;
     int retry_times = 0;
@@ -414,7 +418,7 @@ Status OlapTableSink::_automatic_create_partition() {
         if (retry_times++ > 1) {
             SleepFor(MonoDelta::FromMilliseconds(std::min(5000, timeout_ms)));
             VLOG(1) << "load_id=" << print_id(_load_id) << ", txn_id: " << std::to_string(_txn_id)
-                    << "automatic partition rpc retry " << retry_times;
+                    << " automatic partition rpc retry " << retry_times;
         }
         RETURN_IF_ERROR(ThriftRpcHelper::rpc<FrontendServiceClient>(
                 master_addr.hostname, master_addr.port,
@@ -424,7 +428,7 @@ Status OlapTableSink::_automatic_create_partition() {
              butil::gettimeofday_s() - start_ts < timeout_ms / 1000);
 
     LOG(INFO) << "load_id=" << print_id(_load_id) << ", txn_id: " << std::to_string(_txn_id)
-              << "automatic partition rpc end response " << result;
+              << " automatic partition rpc end response " << result;
     if (result.status.status_code == TStatusCode::OK) {
         // add new created partitions
         RETURN_IF_ERROR(_vectorized_partition->add_partitions(result.partitions));
@@ -577,6 +581,14 @@ Status OlapTableSink::_incremental_open_node_channel(const std::vector<TOlapTabl
 }
 
 Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
+    return _send_chunk(state, chunk, false);
+}
+
+Status OlapTableSink::send_chunk_nonblocking(RuntimeState* state, Chunk* chunk) {
+    return _send_chunk(state, chunk, true);
+}
+
+Status OlapTableSink::_send_chunk(RuntimeState* state, Chunk* chunk, bool nonblocking) {
     SCOPED_TIMER(_profile->total_time_counter());
     DCHECK(chunk->num_rows() > 0);
     size_t num_rows = chunk->num_rows();
@@ -653,11 +665,12 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
                         _is_automatic_partition_running.store(false, std::memory_order_release);
                     }));
 
-                    if (_nonblocking_send_chunk) {
+                    if (nonblocking) {
                         _has_automatic_partition = true;
                         return Status::EAgain("");
                     } else {
                         _automatic_partition_token->wait();
+                        RETURN_IF_ERROR(this->_automatic_partition_status);
                         // after the partition is created, go through the data again
                         RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                             &_validate_selection, &invalid_row_indexs,
@@ -665,6 +678,7 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
                     }
                 }
             } else {
+                RETURN_IF_ERROR(this->_automatic_partition_status);
                 RETURN_IF_ERROR(_vectorized_partition->find_tablets(chunk, &_partitions, &_tablet_indexes,
                                                                     &_validate_selection, &invalid_row_indexs, _txn_id,
                                                                     nullptr));
@@ -685,30 +699,28 @@ Status OlapTableSink::send_chunk(RuntimeState* state, Chunk* chunk) {
             }
             _validate_select_idx.resize(selected_size);
 
-            if (num_rows_after_validate - _validate_select_idx.size() > 0) {
-                std::stringstream ss;
-                if (_enable_automatic_partition) {
-                    ss << "The row create partition failed since " << _automatic_partition_status.to_string();
-                } else {
+            if (!_ignore_out_of_partition) {
+                if (num_rows_after_validate - _validate_select_idx.size() > 0) {
+                    std::stringstream ss;
                     ss << "The row is out of partition ranges. Please add a new partition.";
-                }
-                if (!state->has_reached_max_error_msg_num() && invalid_row_indexs.size() > 0) {
-                    std::string debug_row = chunk->debug_row(invalid_row_indexs.back());
-                    state->append_error_msg_to_file(debug_row, ss.str());
-                }
-                for (auto i : invalid_row_indexs) {
-                    if (state->enable_log_rejected_record()) {
-                        state->append_rejected_record_to_file(chunk->rebuild_csv_row(i, ","), ss.str(), "");
-                    } else {
-                        break;
+                    if (!state->has_reached_max_error_msg_num() && invalid_row_indexs.size() > 0) {
+                        std::string debug_row = chunk->debug_row(invalid_row_indexs.back());
+                        state->append_error_msg_to_file(debug_row, ss.str());
+                    }
+                    for (auto i : invalid_row_indexs) {
+                        if (state->enable_log_rejected_record()) {
+                            state->append_rejected_record_to_file(chunk->rebuild_csv_row(i, ","), ss.str(), "");
+                        } else {
+                            break;
+                        }
                     }
                 }
-            }
 
-            int64_t num_rows_load_filtered = num_rows - _validate_select_idx.size();
-            if (num_rows_load_filtered > 0) {
-                _number_filtered_rows += num_rows_load_filtered;
-                state->update_num_rows_load_filtered(num_rows_load_filtered);
+                int64_t num_rows_load_filtered = num_rows - _validate_select_idx.size();
+                if (num_rows_load_filtered > 0) {
+                    _number_filtered_rows += num_rows_load_filtered;
+                    state->update_num_rows_load_filtered(num_rows_load_filtered);
+                }
             }
             _number_output_rows += _validate_select_idx.size();
             state->update_num_rows_load_sink(_validate_select_idx.size());
@@ -1144,4 +1156,4 @@ Status OlapTableSink::reset_epoch(RuntimeState* state) {
     return Status::OK();
 }
 
-} // namespace starrocks::stream_load
+} // namespace starrocks

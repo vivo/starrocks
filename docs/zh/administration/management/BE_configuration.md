@@ -48,7 +48,16 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 - 类型：String
 - 单位：-
 - 是否动态：否
-- 描述：以 CIDR 形式指定 BE IP 地址，适用于机器有多个 IP，需要指定优先使用的网络。
+- 描述：为有多个 IP 地址的服务器声明 IP 选择策略。请注意，最多应该有一个 IP 地址与此列表匹配。此参数的值是一个以分号分隔格式的列表，用 CIDR 表示法，例如 `10.10.10.0/24`。如果没有 IP 地址匹配此列表中的条目，系统将随机选择服务器的一个可用 IP 地址。从 v3.3.0 开始，StarRocks 支持基于 IPv6 的部署。如果服务器同时具有 IPv4 和 IPv6 地址，并且未指定此参数，系统将默认使用 IPv4 地址。您可以通过将 `net_use_ipv6_when_priority_networks_empty` 设置为 `true` 来更改此行为。
+- 引入版本：-
+
+##### net_use_ipv6_when_priority_networks_empty
+
+- 默认值：false
+- 类型：Boolean
+- 单位：-
+- 是否动态：否
+- 描述：用于控制在未指定 `priority_networks` 时是否优先使用 IPv6 地址的布尔值。`true` 表示当托管节点的服务器同时具有 IPv4 和 IPv6 地址且未指定 `priority_networks` 时，允许系统优先使用 IPv6 地址。
 - 引入版本：-
 
 ##### mem_limit
@@ -340,8 +349,8 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 - 默认值：INFO
 - 类型：String
 - 单位：-
-- 是否动态：否
-- 描述：日志级别。有效值：INFO、WARNING、ERROR、FATAL。
+- 是否动态：是（自 v3.3.0、v3.2.7 及 v3.1.12 起）
+- 描述：日志级别。有效值：INFO、WARNING、ERROR、FATAL。自 v3.3.0、v3.2.7 及 v3.1.12 起，该参数变为动态参数。
 - 引入版本：-
 
 ##### sys_log_roll_mode
@@ -1593,11 +1602,11 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 <!--
 ##### stale_memtable_flush_time_sec
 
-- 默认值：30
+- 默认值：0
 - 类型：Int
 - 单位：Seconds
 - 是否动态：是
-- 描述：
+- 描述：0表示禁止，其他上次更新时间大于stale_memtable_flush_time_sec的memtable会在内存不足时持久化
 - 引入版本：-
 -->
 
@@ -2182,6 +2191,15 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 - 引入版本：-
 -->
 
+##### query_pool_spill_mem_limit_threshold
+
+- 默认值：1.0
+- 类型：Double
+- 单位：-
+- 是否动态：否
+- 描述：如果开启自动落盘功能, 当所有查询使用的内存超过 `query_pool memory limit * query_pool_spill_mem_limit_threshold` 时，系统触发中间结果落盘。
+- 引入版本：3.2.7
+
 ##### result_buffer_cancelled_interval_time
 
 - 默认值：300
@@ -2738,38 +2756,33 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 - 引入版本：-
 -->
 
-<!--
 ##### parquet_late_materialization_enable
 
 - 默认值：true
 - 类型：Boolean
 - 单位：-
 - 是否动态：否
-- 描述：
+- 描述：是否使用延迟物化优化 Parquet 读性能。
 - 引入版本：-
--->
 
-<!--
+
 ##### parquet_late_materialization_v2_enable
 
 - 默认值：true
 - 类型：Boolean
 - 单位：-
 - 是否动态：否
-- 描述：
-- 引入版本：-
--->
+- 描述：是否使用 v2 版延迟物化优化 Parquet 读性能。v3.2 版本支持两个版本的 Parquet Reader 延迟物化，v3.3 版本仅保留 `parquet_late_materialization_enable` 延迟物化，并删除该变量。
+- 引入版本：v3.2
 
-<!--
 ##### parquet_page_index_enable
 
 - 默认值：true
 - 类型：Boolean
 - 单位：-
 - 是否动态：否
-- 描述：
-- 引入版本：-
--->
+- 描述：是否使用 Parquet Pageindex 信息优化读性能。
+- 引入版本：v3.3
 
 <!--
 ##### io_coalesce_read_max_buffer_size
@@ -2793,16 +2806,14 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 - 引入版本：-
 -->
 
-<!--
 ##### io_coalesce_adaptive_lazy_active
 
 - 默认值：true
 - 类型：Boolean
 - 单位：-
 - 是否动态：是
-- 描述：
-- 引入版本：-
--->
+- 描述：根据谓词选择度，自适应决定是否将谓词列 IO 和非谓词列 IO 进行合并。
+- 引入版本：v3.2
 
 <!--
 ##### io_tasks_per_scan_operator
@@ -2979,7 +2990,7 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 - 默认值：false
 - 类型：Boolean
 - 单位：-
-- 是否动态：是
+- 是否动态：否
 - 描述：是否开启 RFC-3986 编码。从 Google GCS 查询数据时，如果 Object.key 包含特殊字符（例如 `=`，`$`），由于 result URL 未解析这些字符，会导致认证失败。开启 RFC-3986 编码能确保字符正确编码。该特性对于 Hive 分区表非常重要。如果使用 OBS 或 KS3 对象存储，需要在 `be.conf` 开启该参数，不然访问不通。
 - 引入版本：v3.1
 
@@ -3199,7 +3210,7 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 - 类型：Int
 - 单位：-
 - 是否动态：否
-- 描述：存算分离集群中 CN（v3.0 中的 BE）的额外 Agent 服务端口。
+- 描述：BE 和 CN 的额外 Agent 服务端口。
 - 引入版本：-
 
 <!--
@@ -3308,7 +3319,7 @@ curl http://<BE_IP>:<BE_HTTP_PORT>/varz
 
 ##### starlet_use_star_cache
 
-- 默认值：true
+- 默认值：false（v3.1）true（v3.2.3 起）
 - 类型：Boolean
 - 单位：-
 - 是否动态：是

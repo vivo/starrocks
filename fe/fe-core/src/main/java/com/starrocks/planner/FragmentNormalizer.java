@@ -231,9 +231,8 @@ public class FragmentNormalizer {
     public ByteBuffer normalizeExpr(Expr expr) {
         uncacheable = uncacheable || hasNonDeterministicFunctions(expr);
         TExpr texpr = expr.normalize(this);
-        //TSerializer ser = new TSerializer(new TCompactProtocol.Factory());
-        TSerializer ser = new TSerializer(new TSimpleJSONProtocol.Factory());
         try {
+            TSerializer ser = new TSerializer(new TSimpleJSONProtocol.Factory());
             return ByteBuffer.wrap(ser.serialize(texpr));
         } catch (Exception ignored) {
             Preconditions.checkArgument(false);
@@ -513,7 +512,7 @@ public class FragmentNormalizer {
 
     List<Expr> getPartitionRangePredicates(List<Expr> conjuncts,
                                            List<Map.Entry<Long, Range<PartitionKey>>> rangeMap,
-                                           RangePartitionInfo partitionInfo,
+                                           List<Column> partitionColumns,
                                            SlotId partitionSlotId) {
 
         List<Expr> exprs = conjuncts.stream().flatMap(e -> flatAndPredicate(e).stream()).collect(Collectors.toList());
@@ -552,7 +551,7 @@ public class FragmentNormalizer {
             return conjuncts;
         }
 
-        Column partitionColumn = partitionInfo.getPartitionColumns().get(0);
+        Column partitionColumn = partitionColumns.get(0);
         List<Range<PartitionKey>> partitionRanges = rangeMap.stream()
                 .map(Map.Entry::getValue).collect(Collectors.toList());
 

@@ -65,6 +65,7 @@ import com.starrocks.alter.AlterJobV2;
 import com.starrocks.alter.LakeTableAlterMetaJob;
 import com.starrocks.alter.LakeTableAsyncFastSchemaChangeJob;
 import com.starrocks.alter.LakeTableSchemaChangeJob;
+import com.starrocks.alter.OnlineOptimizeJobV2;
 import com.starrocks.alter.OptimizeJobV2;
 import com.starrocks.alter.RollupJobV2;
 import com.starrocks.alter.SchemaChangeJobV2;
@@ -125,6 +126,7 @@ import com.starrocks.lake.RecycleLakeRangePartitionInfo;
 import com.starrocks.lake.backup.LakeBackupJob;
 import com.starrocks.lake.backup.LakeRestoreJob;
 import com.starrocks.lake.backup.LakeTableSnapshotInfo;
+import com.starrocks.lake.compaction.CompactionTxnCommitAttachment;
 import com.starrocks.load.loadv2.BrokerLoadJob;
 import com.starrocks.load.loadv2.InsertLoadJob;
 import com.starrocks.load.loadv2.LoadJob;
@@ -255,6 +257,7 @@ public class GsonUtils {
                     .registerSubtype(RollupJobV2.class, "RollupJobV2")
                     .registerSubtype(SchemaChangeJobV2.class, "SchemaChangeJobV2")
                     .registerSubtype(OptimizeJobV2.class, "OptimizeJobV2")
+                    .registerSubtype(OnlineOptimizeJobV2.class, "OnlineOptimizeJobV2")
                     .registerSubtype(LakeTableSchemaChangeJob.class, "LakeTableSchemaChangeJob")
                     .registerSubtype(LakeTableAlterMetaJob.class, "LakeTableAlterMetaJob")
                     .registerSubtype(LakeTableAsyncFastSchemaChangeJob.class, "LakeTableFastSchemaEvolutionJob");
@@ -349,7 +352,8 @@ public class GsonUtils {
                     .registerSubtype(MiniLoadTxnCommitAttachment.class, "MiniLoadTxnCommitAttachment")
                     .registerSubtype(RLTaskTxnCommitAttachment.class, "RLTaskTxnCommitAttachment")
                     .registerSubtype(StreamLoadTxnCommitAttachment.class, "StreamLoadTxnCommitAttachment")
-                    .registerSubtype(ReplicationTxnCommitAttachment.class, "ReplicationTxnCommitAttachment");
+                    .registerSubtype(ReplicationTxnCommitAttachment.class, "ReplicationTxnCommitAttachment")
+                    .registerSubtype(CompactionTxnCommitAttachment.class, "CompactionTxnCommitAttachment");
 
     public static final RuntimeTypeAdapterFactory<RoutineLoadProgress> ROUTINE_LOAD_PROGRESS_TYPE_RUNTIME_ADAPTER_FACTORY =
             RuntimeTypeAdapterFactory.of(RoutineLoadProgress.class, "clazz")
@@ -716,39 +720,5 @@ public class GsonUtils {
                 return PrimitiveType.INVALID_TYPE;
             }
         }
-    }
-
-    /*
-    * For historical reasons, there was a period of time when the code serialized Expr directly in GsonUtils,
-    * which would cause problems for the future expansion of Expr. This class is for code compatibility.
-    * Starting from version 3.2, this compatibility class can be deleted.
-    *
-    *
-    private static class ExpressionSerializer implements JsonSerializer<Expr> {
-        @Override
-        public JsonElement serialize(Expr expr, Type type, JsonSerializationContext context) {
-            JsonObject expressionJson = new JsonObject();
-            expressionJson.addProperty("expr", expr.toSql());
-            return expressionJson;
-        }
-    }
-
-    private static class ExpressionDeserializer implements JsonDeserializer<Expr> {
-        @Override
-        public Expr deserialize(JsonElement jsonElement, Type type, JsonDeserializationContext context)
-                throws JsonParseException {
-            JsonObject expressionObject = jsonElement.getAsJsonObject();
-            String expressionSql = expressionObject.get("expr").getAsString();
-            return SqlParser.parseSqlToExpr(expressionSql, SqlModeHelper.MODE_DEFAULT);
-        }
-    }
-     */
-    public static class ExpressionSerializedObject {
-        public ExpressionSerializedObject(String expressionSql) {
-            this.expressionSql = expressionSql;
-        }
-
-        @SerializedName("expr")
-        public String expressionSql;
     }
 }

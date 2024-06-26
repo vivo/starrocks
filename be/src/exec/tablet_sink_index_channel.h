@@ -25,7 +25,7 @@
 
 #include "common/status.h"
 #include "common/tracer.h"
-#include "exec/data_sink.h"
+#include "exec/async_data_sink.h"
 #include "exec/tablet_info.h"
 #include "gen_cpp/Types_types.h"
 #include "gen_cpp/doris_internal_service.pb.h"
@@ -43,10 +43,11 @@ class MemTracker;
 class TupleDescriptor;
 class TxnLogPB;
 
-namespace stream_load {
-
 class OlapTableSink;    // forward declaration
 class TabletSinkSender; // forward declaration
+
+template <typename T>
+void serialize_to_iobuf(const T& proto_obj, butil::IOBuf* iobuf);
 
 // The counter of add_batch rpc of a single node
 struct AddBatchCounter {
@@ -322,5 +323,4 @@ private:
     bool _has_intolerable_failure = false;
 };
 
-} // namespace stream_load
 } // namespace starrocks

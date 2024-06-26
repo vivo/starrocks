@@ -89,9 +89,6 @@ public abstract class StatisticsCollectJob {
         DEFAULT_VELOCITY_ENGINE = new VelocityEngine();
         // close velocity log
         DEFAULT_VELOCITY_ENGINE.setProperty(VelocityEngine.RUNTIME_LOG_REFERENCE_LOG_INVALID, false);
-        DEFAULT_VELOCITY_ENGINE.setProperty(VelocityEngine.RUNTIME_LOG_LOGSYSTEM_CLASS,
-                "org.apache.velocity.runtime.log.Log4JLogChute");
-        DEFAULT_VELOCITY_ENGINE.setProperty("runtime.log.logsystem.log4j.logger", "velocity");
     }
 
     public abstract void collect(ConnectContext context, AnalyzeStatus analyzeStatus) throws Exception;
@@ -213,7 +210,7 @@ public abstract class StatisticsCollectJob {
 
     public static String fullAnalyzeGetDataSize(String columnName, Type columnType) {
         if (columnType.getPrimitiveType().isCharFamily()) {
-            return "IFNULL(SUM(CHAR_LENGTH(" + StatisticUtils.quoting(columnName) + ")), 0)";
+            return "IFNULL(SUM(CHAR_LENGTH(" + columnName + ")), 0)";
         }
         long typeSize = columnType.getTypeSize();
         return "COUNT(1) * " + typeSize;

@@ -340,6 +340,7 @@ RANDOM: 'RANDOM';
 RANGE: 'RANGE';
 RANK: 'RANK';
 READ: 'READ';
+REASON: 'REASON';
 RECOVER: 'RECOVER';
 REFRESH: 'REFRESH';
 REWRITE: 'REWRITE';
@@ -476,6 +477,8 @@ UNLOCK: 'UNLOCK';
 LOW_PRIORITY: 'LOW_PRIORITY';
 DISK: 'DISK';
 BEFORE: 'BEFORE';
+DOUBLE_DOLLAR: '$$';
+FIELD: 'FIELD';
 
 EQ  : '=';
 NEQ : '<>' | '!=';
@@ -484,6 +487,7 @@ LTE : '<=';
 GT  : '>';
 GTE : '>=';
 EQ_FOR_NULL: '<=>';
+ARRAY_ELEMENT: '[*]';
 
 PLUS_SYMBOL: '+';
 MINUS_SYMBOL: '-';
@@ -585,4 +589,8 @@ DOTDOTDOT: '...';
 
 WS
     : [ \r\n\t\u3000]+ -> channel(HIDDEN)
+    ;
+
+ATTACHMENT
+    : DOUBLE_DOLLAR .* DOUBLE_DOLLAR
     ;

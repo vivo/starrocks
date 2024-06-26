@@ -236,7 +236,7 @@ public class SchemaChangeJobV2Test extends DDLTestBase {
     }
 
     @Test
-    public void testModifyDynamicPartitionNormal() throws UserException {
+    public void testModifyDynamicPartitionNormal() throws Exception {
         SchemaChangeHandler schemaChangeHandler = GlobalStateMgr.getCurrentState().getSchemaChangeHandler();
         ArrayList<AlterClause> alterClauses = new ArrayList<>();
         Map<String, String> properties = new HashMap<>();
@@ -287,6 +287,12 @@ public class SchemaChangeJobV2Test extends DDLTestBase {
         tmpAlterClauses.add(new ModifyTablePropertiesClause(properties));
         schemaChangeHandler.process(tmpAlterClauses, db, olapTable);
         Assert.assertEquals(3, olapTable.getTableProperty().getDynamicPartitionProperty().getBuckets());
+    }
+    @Test
+    public void testModifyDynamicPropertyTrim() throws Exception {
+        String sql = "ALTER TABLE testDb1.testTable1 SET(\"dynamic_partition.buckets \"=\"1\")";
+        AlterTableStmt stmt = (AlterTableStmt) UtFrameUtils.parseStmtWithNewParser(sql, starRocksAssert.getCtx());
+        Assert.assertEquals("1", stmt.getOps().get(0).getProperties().get("dynamic_partition.buckets"));
     }
 
     public void modifyDynamicPartitionWithoutTableProperty(String propertyKey, String propertyValue, String expectErrMsg)
@@ -406,5 +412,41 @@ public class SchemaChangeJobV2Test extends DDLTestBase {
         } catch (DdlException e) {
             Assert.assertTrue(e.getMessage().contains("no available compute nodes"));
         }
+    }
+
+    @Test
+    public void testCancelPendingJobWithFlag() throws Exception {
+        SchemaChangeHandler schemaChangeHandler = GlobalStateMgr.getCurrentState().getSchemaChangeHandler();
+        Database db = GlobalStateMgr.getCurrentState().getDb(GlobalStateMgrTestUtil.testDb1);
+        OlapTable olapTable = (OlapTable) db.getTable(GlobalStateMgrTestUtil.testTable1);
+        olapTable.setUseFastSchemaEvolution(false);
+        Partition testPartition = olapTable.getPartition(GlobalStateMgrTestUtil.testTable1);
+
+        schemaChangeHandler.process(alterTableStmt.getOps(), db, olapTable);
+        Map<Long, AlterJobV2> alterJobsV2 = schemaChangeHandler.getAlterJobsV2();
+        Assert.assertEquals(1, alterJobsV2.size());
+        SchemaChangeJobV2 schemaChangeJob = (SchemaChangeJobV2) alterJobsV2.values().stream().findAny().get();
+        alterJobsV2.clear();
+
+        MaterializedIndex baseIndex = testPartition.getBaseIndex();
+        assertEquals(IndexState.NORMAL, baseIndex.getState());
+        assertEquals(PartitionState.NORMAL, testPartition.getState());
+        assertEquals(OlapTableState.SCHEMA_CHANGE, olapTable.getState());
+
+        LocalTablet baseTablet = (LocalTablet) baseIndex.getTablets().get(0);
+        List<Replica> replicas = baseTablet.getImmutableReplicas();
+        Replica replica1 = replicas.get(0);
+
+        assertEquals(1, replica1.getVersion());
+        assertEquals(-1, replica1.getLastFailedVersion());
+        assertEquals(1, replica1.getLastSuccessVersion());
+
+        schemaChangeJob.setIsCancelling(true);
+        schemaChangeJob.runPendingJob();
+        schemaChangeJob.setIsCancelling(false);
+     
+        schemaChangeJob.setWaitingCreatingReplica(true);
+        schemaChangeJob.cancel("");
+        schemaChangeJob.setWaitingCreatingReplica(false);
     }
 }

@@ -708,6 +708,8 @@ vectorized_functions = [
     # hash function
     [100010, 'murmur_hash3_32', True, False, 'INT', ['VARCHAR', '...'], 'HashFunctions::murmur_hash3_32'],
     [100021, 'xx_hash3_64', True, False, 'BIGINT', ['VARCHAR', '...'], 'HashFunctions::xx_hash3_64'],
+    [100022, 'xx_hash3_128', True, False, 'LARGEINT', ['VARCHAR', '...'], 'HashFunctions::xx_hash3_128'],
+
 
     # Utility functions
     [100011, 'sleep', True, False, 'BOOLEAN', ['INT'], "UtilityFunctions::sleep"],
@@ -1207,6 +1209,8 @@ vectorized_functions = [
      "ArrayFunctions::array_generate<TYPE_BIGINT>"],
     [150334, 'array_generate', True, False, 'ARRAY_LARGEINT', ['LARGEINT', 'LARGEINT', 'LARGEINT'],
      "ArrayFunctions::array_generate<TYPE_LARGEINT>"],
+
+    [150335, 'array_sortby', True, False, 'ANY_ARRAY', ['ANY_ARRAY', 'ANY_ARRAY', 'ANY_ARRAY', "..."], 'ArrayFunctions::array_sortby_multi'],
 
     # high-order functions related to lambda functions.
     [160100, 'array_map', True, False, 'ANY_ARRAY', ['FUNCTION', 'ANY_ARRAY', "..."], 'ArrayFunctions::array_map'],

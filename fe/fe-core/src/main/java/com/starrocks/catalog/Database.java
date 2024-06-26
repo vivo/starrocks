@@ -35,6 +35,7 @@
 package com.starrocks.catalog;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.gson.annotations.SerializedName;
@@ -63,7 +64,6 @@ import com.starrocks.system.SystemInfoService;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -142,7 +142,7 @@ public class Database extends MetaObject implements Writable {
         if (this.fullQualifiedName == null) {
             this.fullQualifiedName = "";
         }
-        this.rwLock = new QueryableReentrantReadWriteLock();
+        this.rwLock = new QueryableReentrantReadWriteLock(true);
         this.idToTable = new ConcurrentHashMap<>();
         this.nameToTable = new ConcurrentHashMap<>();
         this.dataQuotaBytes = FeConstants.DEFAULT_DB_DATA_QUOTA_BYTES;
@@ -515,12 +515,6 @@ public class Database extends MetaObject implements Writable {
         return Optional.ofNullable(getTable(tableId));
     }
 
-    public static Database read(DataInput in) throws IOException {
-        Database db = new Database();
-        db.readFields(in);
-        return db;
-    }
-
     @Override
     public int getSignature(int signatureVersion) {
         Adler32 adler32 = new Adler32();
@@ -571,43 +565,6 @@ public class Database extends MetaObject implements Writable {
         out.writeLong(replicaQuotaSize);
     }
 
-    public void readFields(DataInput in) throws IOException {
-        super.readFields(in);
-
-        id = in.readLong();
-        fullQualifiedName = ClusterNamespace.getNameFromFullName(Text.readString(in));
-        // read groups
-        int numTables = in.readInt();
-        for (int i = 0; i < numTables; ++i) {
-            Table table = Table.read(in);
-            nameToTable.put(table.getName(), table);
-            idToTable.put(table.getId(), table);
-        }
-
-        // read quota
-        dataQuotaBytes = in.readLong();
-        // Compatible for Cluster
-        Text.readString(in);
-        // Compatible for dbState
-        Text.readString(in);
-        // Compatible for attachDbName
-        Text.readString(in);
-
-        int numEntries = in.readInt();
-        for (int i = 0; i < numEntries; ++i) {
-            String name = Text.readString(in);
-            List<Function> functions = new ArrayList<>();
-            int numFunctions = in.readInt();
-            for (int j = 0; j < numFunctions; ++j) {
-                functions.add(Function.read(in));
-            }
-
-            name2Function.put(name, functions);
-        }
-
-        replicaQuotaSize = in.readLong();
-    }
-
     @Override
     public int hashCode() {
         return Long.hashCode(id);
@@ -655,13 +612,17 @@ public class Database extends MetaObject implements Writable {
     }
 
     public synchronized void addFunction(Function function) throws UserException {
-        addFunctionImpl(function, false);
+        addFunction(function, false);
+    }
+
+    public synchronized void addFunction(Function function, boolean allowExists) throws UserException {
+        addFunctionImpl(function, false, allowExists);
         GlobalStateMgr.getCurrentState().getEditLog().logAddFunction(function);
     }
 
     public synchronized void replayAddFunction(Function function) {
         try {
-            addFunctionImpl(function, true);
+            addFunctionImpl(function, true, false);
         } catch (UserException e) {
             Preconditions.checkArgument(false);
         }
@@ -676,31 +637,18 @@ public class Database extends MetaObject implements Writable {
         db.replayAddFunction(function);
     }
 
-    // return true if add success, false
-    private void addFunctionImpl(Function function, boolean isReplay) throws UserException {
+    private void addFunctionImpl(Function function, boolean isReplay, boolean allowExists) throws UserException {
         String functionName = function.getFunctionName().getFunction();
-        List<Function> existFuncs = name2Function.get(functionName);
+        List<Function> existFuncs = name2Function.getOrDefault(functionName, ImmutableList.of());
         if (!isReplay) {
-            if (existFuncs != null) {
-                for (Function existFunc : existFuncs) {
-                    if (function.compare(existFunc, Function.CompareMode.IS_IDENTICAL)) {
-                        throw new UserException("function already exists");
-                    }
+            for (Function existFunc : existFuncs) {
+                if (!allowExists && function.compare(existFunc, Function.CompareMode.IS_IDENTICAL)) {
+                    throw new UserException("function already exists");
                 }
             }
-            // Get function id for this UDF, use CatalogIdGenerator. Only get function id
-            // when isReplay is false
-            long functionId = GlobalStateMgr.getCurrentState().getNextId();
-            // all user-defined functions id are negative to avoid conflicts with the builtin function
-            function.setFunctionId(-functionId);
+            GlobalFunctionMgr.assignIdToUserDefinedFunction(function);
         }
-
-        List<Function> functions = new ArrayList<>();
-        if (existFuncs != null) {
-            functions.addAll(existFuncs);
-        }
-        functions.add(function);
-        name2Function.put(functionName, functions);
+        name2Function.put(functionName, GlobalFunctionMgr.addOrReplaceFunction(function, existFuncs));
     }
 
     public synchronized void dropFunction(FunctionSearchDesc function) throws UserException {

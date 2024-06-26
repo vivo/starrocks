@@ -21,11 +21,12 @@
 
 namespace starrocks {
 
-SchemaScanner::ColumnDesc SysFeMemoryUsage::_s_columns[] = {{"module_name", TYPE_VARCHAR, sizeof(StringValue), true},
-                                                            {"class_name", TYPE_VARCHAR, sizeof(StringValue), true},
-                                                            {"current_consumption", TYPE_BIGINT, sizeof(long), true},
-                                                            {"peak_consumption", TYPE_BIGINT, sizeof(long), true},
-                                                            {"counter_info", TYPE_VARCHAR, sizeof(StringValue), true}};
+SchemaScanner::ColumnDesc SysFeMemoryUsage::_s_columns[] = {
+        {"module_name", TypeDescriptor::create_varchar_type(sizeof(StringValue)), sizeof(StringValue), true},
+        {"class_name", TypeDescriptor::create_varchar_type(sizeof(StringValue)), sizeof(StringValue), true},
+        {"current_consumption", TypeDescriptor::from_logical_type(TYPE_BIGINT), sizeof(long), true},
+        {"peak_consumption", TypeDescriptor::from_logical_type(TYPE_BIGINT), sizeof(long), true},
+        {"counter_info", TypeDescriptor::create_varchar_type(sizeof(StringValue)), sizeof(StringValue), true}};
 
 SysFeMemoryUsage::SysFeMemoryUsage()
         : SchemaScanner(_s_columns, sizeof(_s_columns) / sizeof(SchemaScanner::ColumnDesc)) {}
@@ -44,7 +45,7 @@ Status SysFeMemoryUsage::start(RuntimeState* state) {
     TFeMemoryReq request;
     request.__set_auth_info(auth);
 
-    return (SchemaHelper::list_fe_memory_usage(_ss_state, request, &_result));
+    return SchemaHelper::list_fe_memory_usage(_ss_state, request, &_result);
 }
 
 Status SysFeMemoryUsage::_fill_chunk(ChunkPtr* chunk) {

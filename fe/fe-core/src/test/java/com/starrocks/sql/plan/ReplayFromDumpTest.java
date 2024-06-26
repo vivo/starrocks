@@ -16,6 +16,7 @@ package com.starrocks.sql.plan;
 
 import com.starrocks.common.FeConstants;
 import com.starrocks.common.Pair;
+import com.starrocks.common.profile.Tracers;
 import com.starrocks.qe.SessionVariable;
 import com.starrocks.qe.VariableMgr;
 import com.starrocks.sql.optimizer.OptExpression;
@@ -453,13 +454,13 @@ public class ReplayFromDumpTest extends ReplayFromDumpTestBase {
         Pair<QueryDumpInfo, String> replayPair =
                 getPlanFragment(getDumpInfoFromFile("query_dump/correlated_subquery_with_equals_expression"), null,
                         TExplainLevel.NORMAL);
-        Assert.assertTrue(replayPair.second, replayPair.second.contains(" 22:NESTLOOP JOIN\n" +
+        Assert.assertTrue(replayPair.second, replayPair.second.contains("  22:NESTLOOP JOIN\n" +
                 "  |  join op: INNER JOIN\n" +
                 "  |  colocate: false, reason: \n" +
                 "  |  other join predicates: if(19: c_0_0 != 1: c_0_0, 4: c_0_3, 20: c_0_3) = '1969-12-28', " +
-                "CASE WHEN (21: countRows IS NULL) OR (21: countRows = 0) THEN FALSE WHEN 1: c_0_0 IS NULL THEN NULL " +
-                "WHEN 16: c_0_0 IS NOT NULL THEN TRUE WHEN 22: countNotNulls < 21: countRows THEN NULL ELSE FALSE END" +
-                " IS NULL"));
+                "if(((1: c_0_0 IS NULL) AND (NOT ((21: countRows IS NULL) OR (21: countRows = 0)))) OR " +
+                "((22: countNotNulls < 21: countRows) AND (((NOT ((21: countRows IS NULL) OR (21: countRows = 0))) " +
+                "AND (1: c_0_0 IS NOT NULL)) AND (16: c_0_0 IS NULL))), TRUE, FALSE)\n"));
         Assert.assertTrue(replayPair.second, replayPair.second.contains("  20:HASH JOIN\n" +
                 "  |  join op: LEFT OUTER JOIN (PARTITIONED)\n" +
                 "  |  colocate: false, reason: \n" +
@@ -883,14 +884,6 @@ public class ReplayFromDumpTest extends ReplayFromDumpTestBase {
     }
 
     @Test
-    public void testViewDeltaRewriter() throws Exception {
-        Pair<QueryDumpInfo, String> replayPair =
-                getPlanFragment(getDumpInfoFromFile("query_dump/view_delta"),
-                        connectContext.getSessionVariable(), TExplainLevel.NORMAL);
-        Assert.assertTrue(replayPair.second, replayPair.second.contains("mv_yyf_trade_water3"));
-    }
-
-    @Test
     public void testNoCTEOperatorPropertyDerived() throws Exception {
         Pair<QueryDumpInfo, String> replayPair =
                 getPlanFragment(getDumpInfoFromFile("query_dump/no_cte_operator_test"),
@@ -910,5 +903,58 @@ public class ReplayFromDumpTest extends ReplayFromDumpTestBase {
                 "  |  offset: 0\n" +
                 "  |  \n" +
                 "  24:EXCHANGE"));
+    }
+
+    @Test
+    public void testTimeoutDeepJoinCostPrune() throws Exception {
+        Tracers.register(connectContext);
+        Tracers.init(connectContext, Tracers.Mode.TIMER, "optimizer");
+        connectContext.getSessionVariable().setOptimizerExecuteTimeout(-1);
+
+        Pair<QueryDumpInfo, String> replayPair =
+                getPlanFragment(getDumpInfoFromFile("query_dump/deep_join_cost"),
+                        connectContext.getSessionVariable(), TExplainLevel.NORMAL);
+        String ss = Tracers.printScopeTimer();
+        int start = ss.indexOf("EnforceAndCostTask[") + "EnforceAndCostTask[".length();
+        int end = ss.indexOf("]", start);
+        long count = Long.parseLong(ss.substring(start, end));
+        Assert.assertTrue(ss, count < 10000);
+    }
+
+    @Test
+    public void testDistinctConstantRewrite() throws Exception {
+        Pair<QueryDumpInfo, String> replayPair =
+                getPlanFragment(getDumpInfoFromFile("query_dump/distinct_constant"),
+                        connectContext.getSessionVariable(), TExplainLevel.NORMAL);
+        Assert.assertTrue(replayPair.second, replayPair.second.contains("4:AGGREGATE (update serialize)\n" +
+                "  |  output: multi_distinct_count(1)"));
+        Assert.assertTrue(replayPair.second, replayPair.second.contains("9:AGGREGATE (update serialize)\n" +
+                "  |  output: multi_distinct_count(NULL)"));
+    }
+
+    @Test
+    public void testSplitOrderBy() throws Exception {
+        Pair<QueryDumpInfo, String> replayPair =
+                getPlanFragment(getDumpInfoFromFile("query_dump/split_order_by"),
+                        null, TExplainLevel.NORMAL);
+        Assert.assertTrue(replayPair.second, replayPair.second.contains("21:MERGING-EXCHANGE"));
+        Assert.assertTrue(replayPair.second, replayPair.second.contains("20:TOP-N"));
+        Assert.assertTrue(replayPair.second, replayPair.second.contains("15:MERGING-EXCHANGE"));
+        Assert.assertTrue(replayPair.second, replayPair.second.contains("14:TOP-N"));
+
+    }
+
+    @Test
+    public void testQueryCacheSetOperator() throws Exception {
+
+        String savedSv = connectContext.getSessionVariable().getJsonString();
+        try {
+            connectContext.getSessionVariable().setEnableQueryCache(true);
+            QueryDumpInfo dumpInfo = getDumpInfoFromJson(getDumpInfoFromFile("query_dump/query_cache_set_operator"));
+            ExecPlan execPlan = UtFrameUtils.getPlanFragmentFromQueryDump(connectContext, dumpInfo);
+            Assert.assertTrue(execPlan.getFragments().stream().anyMatch(frag -> frag.getCacheParam() != null));
+        } finally {
+            connectContext.getSessionVariable().replayFromJson(savedSv);
+        }
     }
 }

@@ -93,17 +93,40 @@ SET forward_to_master = concat('tr', 'u', 'e');
 
 ### 设置变量在单个查询语句中生效
 
-在一些场景中，可能需要对某些查询专门设置变量。可以使用 SET_VAR 提示 (hint) 在查询中设置仅在单个语句内生效的会话变量。举例：
+在一些场景中，可能需要对某些查询专门设置变量。可以使用 SET_VAR 提示 (Hint) 在查询中设置仅在单个语句内生效的会话变量。
+
+当前，StarRocks 支持在以下语句中使用 `SET_VAR` Hint：
+
+- SELECT
+- INSERT（自 v3.1.12 和 v3.2.0 起支持）
+- UPDATE（自 v3.1.12 和 v3.2.0 起支持）
+- DELETE（自 v3.1.12 和 v3.2.0 起支持）
+
+`SET_VAR` 只能跟在以上关键字之后，必须以 `/*+` 开头，以 `*/` 结束。
+
+举例：
 
 ```sql
 SELECT /*+ SET_VAR(query_mem_limit = 8589934592) */ name FROM people ORDER BY name;
 
 SELECT /*+ SET_VAR(query_timeout = 1) */ sleep(3);
-```
 
-> **注意**
->
-> `SET_VAR` 只能跟在 SELECT 关键字之后，必须以 `/*+` 开头，以 `*/` 结束。
+UPDATE /*+ SET_VAR(query_timeout=100) */ tbl SET c1 = 2 WHERE c1 = 1;
+
+DELETE /*+ SET_VAR(query_mem_limit = 8589934592) */
+FROM my_table PARTITION p1
+WHERE k1 = 3;
+
+INSERT /*+ SET_VAR(query_timeout = 10000000) */
+INTO insert_wiki_edit
+    SELECT * FROM FILES(
+        "path" = "s3://inserttest/parquet/insert_wiki_edit_append.parquet",
+        "format" = "parquet",
+        "aws.s3.access_key" = "XXXXXXXXXX",
+        "aws.s3.secret_key" = "YYYYYYYYYY",
+        "aws.s3.region" = "us-west-2"
+);
+```
 
 StarRocks 同时支持在单个语句中设置多个变量，参考如下示例：
 
@@ -190,7 +213,7 @@ SELECT /*+ SET_VAR
 
 ### cbo_prune_subfield
 
-* 含义：是否开启 JSON 子列裁剪。需要配合 BE 动态参数 `enable_json_flat` 一起使用，单独使用可能会导致 JSON 性能变慢。
+* 描述：是否开启 JSON 子列裁剪。需要配合 BE 动态参数 `enable_json_flat` 一起使用，单独使用可能会导致 JSON 性能变慢。
 * 默认值：false
 * 引入版本：v3.3.0
 
@@ -199,6 +222,12 @@ SELECT /*+ SET_VAR
 * 描述：是否启用基于同步物化视图的查询改写。
 * 默认值：true
 * 引入版本：v3.1.11，v3.2.5
+
+### enable_datacache_async_populate_mode
+
+* 描述：是否使用异步方式进行 Data Cache 填充。系统默认使用同步方式进行填充，即在查询数据时同步填充进行缓存填充。
+* 默认值：false
+* 引入版本：v3.2.7
 
 ### query_including_mv_names
 
@@ -220,6 +249,12 @@ SELECT /*+ SET_VAR
 * 默认值：1000
 * 单位：毫秒
 * 类型：Long
+
+### enable_materialized_view_agg_pushdown_rewrite
+
+* 描述：是否为物化视图查询改写启用聚合函数下推。如果设置为 `true`，聚合函数将在查询执行期间下推至 Scan Operator，并在执行 Join Operator 之前被物化视图改写。此举可以缓解 Join 操作导致的数据膨胀，从而提高查询性能。有关此功能的具体场景和限制的详细信息，请参见 [聚合函数下推](../using_starrocks/query_rewrite_with_materialized_views.md#聚合下推)。
+* 默认值：false
+* 引入版本：v3.3.0
 
 ### enable_materialized_view_text_match_rewrite
 
@@ -250,6 +285,12 @@ SELECT /*+ SET_VAR
 * 描述：是否启用物化视图 UNION 改写。如果此项设置为 true，则系统在物化视图的谓词不能满足查询的谓词时，会尝试使用 UNION ALL 来补偿谓词。
 * 默认值：true
 * 引入版本：v2.5.20，v3.1.9，v3.2.7，v3.3.0
+
+### enable_materialized_view_plan_cache
+
+* 描述：是否开启物化视图查询计划缓存，用于提高物化视图查询改写性能。默认值是 `true`，即开启物化视图查询计划缓存。
+* 默认值：true
+* 引入版本：v2.5.13，v3.0.7，v3.1.4，v3.2.0，v3.3.0
 
 ### follower_query_forward_mode
 
@@ -282,6 +323,14 @@ SELECT /*+ SET_VAR
 * 默认值：uncompressed
 * 类型：String
 * 引入版本：v3.2.3
+
+### connector_sink_target_max_file_size
+
+* 描述: 指定将数据写入 Hive 表或 Iceberg 表或使用 Files() 导出数据时目标文件的最大大小。该限制并不一定精确，只作为尽可能的保证。
+* 单位：Bytes
+* 默认值: 1073741824
+* 类型: Long
+* 引入版本: v3.3.0
 
 ### count_distinct_column_buckets
 
@@ -338,6 +387,12 @@ SELECT /*+ SET_VAR
 * 默认值：false，表示不开启。
 * 引入版本：v2.5
 
+### enable_gin_filter
+
+* 描述：查询时是否使用[全文倒排索引](../table_design/indexes/inverted_index.md)。
+* 默认值：true
+* 引入版本：v3.3.0
+
 ### enable_group_level_query_queue (global)
 
 * 描述：是否开启资源组粒度的[查询队列](../administration/management/resource_management/query_queues.md)。
@@ -369,8 +424,7 @@ SELECT /*+ SET_VAR
 
 ### enable_short_circuit
 
-* 描述：是否启用短路径查询。默认值：`false`。如果将其设置为 `true`，当表为[行列混存表](../table_design/hybrid_table.md)，并且[查询满足条件](../table_design/hybrid_table.md#查询数据)
-（用于评估是否为点查）：WHERE 子句的条件列必须包含所有主键列，并且运算符为 `=` 或者 `IN`，则该查询才会走短路径，直接查询按行存储的数据。
+* 描述：是否启用短路径查询。默认值：`false`。如果将其设置为 `true`，当[查询满足条件](../table_design/hybrid_table.md#查询数据)（用于评估是否为点查）：WHERE 子句的条件列必须包含所有主键列，并且运算符为 `=` 或者 `IN`，则该查询才会走短路径。
 * 默认值：false
 * 引入版本：v3.2.3
 
@@ -424,6 +478,22 @@ SELECT /*+ SET_VAR
 * 默认值：`false`，表示使用原来的机制，即每次查询会从多个副本中选择一个。
 * 类型：Boolean
 * 引入版本：v2.5.6、v3.0.8、v3.1.4、v3.2.0
+
+### enable_lake_tablet_internal_parallel
+
+* 描述：是否开启存算分离集群内云原生表的 Tablet 并行 Scan.
+* 默认值：false
+* 类型：Boolean
+* 引入版本：v3.3.0
+
+### tablet_internal_parallel_mode
+
+* 描述：Tablet 内部并行 Scan 策略。有效值:
+  * `auto`: 在 BE 或 CN 节点需要扫描的 Tablet 数小于 DOP 时，系统根据预估的 Tablet 大小自动判断是否需要并行 Scan。
+  * `force_split`: 强制对 Tablet 进行拆分和并行扫描。
+* 默认值：auto
+* 类型：String
+* 引入版本：v2.5.0
 
 ### enable_scan_datacache
 
@@ -795,7 +865,7 @@ SELECT /*+ SET_VAR
 
 ### rewrite_count_distinct_to_bitmap_hll (已弃用)
 
-是否将 Bitmap 和 HLL 类型的 count distinct 查询重写为 bitmap_union_count 和 hll_union_agg。
+是否将 Bitmap 和 HLL 类型的 count distinct 查询改写为 bitmap_union_count 和 hll_union_agg。
 
 ### runtime_filter_on_exchange_node
 

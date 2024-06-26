@@ -3,7 +3,7 @@ displayed_sidebar: "English"
 toc_max_heading_level: 4
 ---
 
-# Full-text inverted index
+# [Preview] Full-text inverted index
 
 Since version 3.3.0, StarRocks supports full-text inverted indexes, which can break the text into smaller words, and create an index entry for each word that can show the mapping relationship between the word and its corresponding row number in the data file. For full-text searches, StarRocks queries the inverted index based on the search keywords, quickly locating the data rows that match the keywords.
 
@@ -21,11 +21,13 @@ During full-text searches, StarRocks can locate index entries containing the sea
 
 ### Create full-text inverted index
 
-:::note
+Before creating a fulltext inverted index, you need to enable FE configuration item `enable_experimental_gin`.
 
-Only the Duplicate Key table supports the full-text inverted index and the table property `replicated_storage` needs to be `false`.
+```sql
+ADMIN SET FRONTEND CONFIG ("enable_experimental_gin" = "true");
+```
 
-:::
+Also, a fulltext inverted index can only be created in the Duplicate Key table and the table property `replicated_storage` needs to be `false`.
 
 #### Create full-text Inverted Index at table creation
 
@@ -81,7 +83,7 @@ ALTER TABLE t DROP index idx;
 
 ### Accelerate queries by full-text inverted index
 
-After creating a full-text inverted index, you also need to consider whether the index column values are tokenized to determine which queries can be accelerated.
+After creating a full-text inverted index, you need to ensure that the system variable `enable_gin_filter` is enabled, so the inverted index can accelerate queries. Also, you need to consider whether the index column values are tokenized to determine which queries can be accelerated.
 
 #### Supported queries when indexed column is tokenized
 

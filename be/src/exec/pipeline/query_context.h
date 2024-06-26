@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 
 #include "exec/pipeline/fragment_context.h"
@@ -147,17 +148,14 @@ public:
         _desc_tbl = desc_tbl;
     }
 
-    DescriptorTbl* desc_tbl() {
-        DCHECK(_desc_tbl != nullptr);
-        return _desc_tbl;
-    }
+    DescriptorTbl* desc_tbl() { return _desc_tbl; }
 
     size_t total_fragments() { return _total_fragments; }
     /// Initialize the mem_tracker of this query.
     /// Positive `big_query_mem_limit` and non-null `wg` indicate
     /// that there is a big query memory limit of this resource group.
     void init_mem_tracker(int64_t query_mem_limit, MemTracker* parent, int64_t big_query_mem_limit = -1,
-                          int64_t spill_mem_limit = -1, workgroup::WorkGroup* wg = nullptr,
+                          std::optional<double> spill_mem_limit = std::nullopt, workgroup::WorkGroup* wg = nullptr,
                           RuntimeState* state = nullptr);
     std::shared_ptr<MemTracker> mem_tracker() { return _mem_tracker; }
     MemTracker* connector_scan_mem_tracker() { return _connector_scan_mem_tracker.get(); }

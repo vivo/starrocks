@@ -27,9 +27,9 @@ import com.starrocks.catalog.Table;
 import com.starrocks.catalog.Type;
 import com.starrocks.common.Config;
 import com.starrocks.common.jmockit.Deencapsulation;
-import com.starrocks.connector.ConnectorPartitionTraits;
 import com.starrocks.connector.PartitionInfo;
 import com.starrocks.connector.exception.StarRocksConnectorException;
+import com.starrocks.connector.partitiontraits.DefaultTraits;
 import com.starrocks.connector.statistics.ConnectorTableColumnStats;
 import com.starrocks.qe.ConnectContext;
 import com.starrocks.server.GlobalStateMgr;
@@ -489,7 +489,7 @@ public class StatisticsCollectJobTest extends PlanTestNoneDBBase {
         };
 
         nativeAnalyzeJob.run(statsConnectCtx, statisticExecutor);
-        Assert.assertEquals(StatsConstants.ScheduleStatus.PENDING, nativeAnalyzeJob.getStatus());
+        Assert.assertEquals(StatsConstants.ScheduleStatus.FINISH, nativeAnalyzeJob.getStatus());
 
         new MockUp<FullStatisticsCollectJob>() {
             @Mock
@@ -560,7 +560,7 @@ public class StatisticsCollectJobTest extends PlanTestNoneDBBase {
         };
 
         externalAnalyzeJob.run(statsConnectCtx, statisticExecutor);
-        Assert.assertEquals(StatsConstants.ScheduleStatus.PENDING, externalAnalyzeJob.getStatus());
+        Assert.assertEquals(StatsConstants.ScheduleStatus.FINISH, externalAnalyzeJob.getStatus());
 
         new MockUp<ExternalFullStatisticsCollectJob>() {
             @Mock
@@ -783,7 +783,7 @@ public class StatisticsCollectJobTest extends PlanTestNoneDBBase {
                 return metaMap;
             }
         };
-        new MockUp<ConnectorPartitionTraits.DefaultTraits>() {
+        new MockUp<DefaultTraits>() {
             @Mock
             public Map<String, PartitionInfo> getPartitionNameWithPartitionInfo() {
                 return ImmutableMap.of("date=2020-01-01", new com.starrocks.connector.iceberg.Partition(
@@ -816,7 +816,7 @@ public class StatisticsCollectJobTest extends PlanTestNoneDBBase {
                         100));
             }
         };
-        new MockUp<ConnectorPartitionTraits.DefaultTraits>() {
+        new MockUp<DefaultTraits>() {
             @Mock
             public Map<String, PartitionInfo> getPartitionNameWithPartitionInfo() {
                 long needUpdateTime = statsUpdateTime.plusSeconds(120).
@@ -921,9 +921,7 @@ public class StatisticsCollectJobTest extends PlanTestNoneDBBase {
         Assert.assertEquals(1, collectSqlList.size());
         assertContains(collectSqlList.get(0).toString(), "v1", "v2", "v3", "v4", "v5");
         assertContains(collectSqlList.get(0).toString(), "p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9");
-        Assert.assertEquals(10, StringUtils.countMatches(collectSqlList.toString(), "COUNT(`v1`)"));
-        Assert.assertEquals(10, StringUtils.countMatches(collectSqlList.toString(), "COUNT(`v3`)"));
-        Assert.assertEquals(10, StringUtils.countMatches(collectSqlList.toString(), "COUNT(`v5`)"));
+        Assert.assertEquals(50, StringUtils.countMatches(collectSqlList.toString(), "COUNT(`column_key`)"));
         Assert.assertEquals(5, StringUtils.countMatches(collectSqlList.toString(), "partition `p0`"));
         Assert.assertEquals(5, StringUtils.countMatches(collectSqlList.toString(), "partition `p1`"));
         Assert.assertEquals(5, StringUtils.countMatches(collectSqlList.toString(), "partition `p9`"));

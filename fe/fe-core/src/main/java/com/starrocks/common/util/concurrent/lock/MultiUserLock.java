@@ -13,6 +13,9 @@
 // limitations under the License.
 package com.starrocks.common.util.concurrent.lock;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -20,6 +23,7 @@ import java.util.List;
 import java.util.Set;
 
 public class MultiUserLock extends Lock {
+    private static final Logger LOG = LogManager.getLogger(MultiUserLock.class);
     /*
      * The owner of the current Lock. For efficiency reasons, the first owner is stored separately.
      * If Locker successfully obtains the lock, it will be added to the owner.
@@ -59,7 +63,6 @@ public class MultiUserLock extends Lock {
             return LockGrantType.NEW;
         }
 
-
         LockHolder lockOwner = null;
         Iterator<LockHolder> ownerIterator = null;
         if (otherOwners != null) {
@@ -83,12 +86,18 @@ public class MultiUserLock extends Lock {
              * whether there are other Lockers with the same LockType.
              */
             if (lockHolderRequest.getLocker().equals(lockOwner.getLocker())) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Locker {} already holds lock on {} with type {}/{}, detail:{}", lockOwner.getLocker(),
+                            lockOwner.getLocker(), lockOwner.getLockType(), lockHolderRequest.getLockType(), this);
+                }
+
                 if (lockHolderRequest.getLockType().equals(lockOwner.getLockType())) {
                     lockOwner.increaseRefCount();
                     return LockGrantType.EXISTING;
-                } else if (lockOwner.getLockType() == LockType.WRITE
-                        && lockHolderRequest.getLockType() == LockType.READ) {
+                } else {
                     /*
+                     * The same Locker can upgrade or degrade locks when it requests different types of locks
+                     *
                      * If you acquire an exclusive lock first and then request a shared lock,
                      * you can successfully acquire the lock. This scenario is generally called "lock downgrade",
                      * but this lock does not actually reduce the original write lock directly to a read lock.
@@ -98,10 +107,10 @@ public class MultiUserLock extends Lock {
                      */
                     hasSameLockerWithDifferentLockType = true;
                 }
-            }
-
-            if (lockOwner.isConflict(lockHolderRequest)) {
-                hasConflicts = true;
+            } else {
+                if (lockOwner.isConflict(lockHolderRequest)) {
+                    hasConflicts = true;
+                }
             }
 
             if (ownerIterator != null && ownerIterator.hasNext()) {
@@ -111,7 +120,7 @@ public class MultiUserLock extends Lock {
             }
         }
 
-        if (hasSameLockerWithDifferentLockType || (!hasConflicts && waiterNum() == 0)) {
+        if (!hasConflicts && (hasSameLockerWithDifferentLockType || waiterNum() == 0)) {
             return LockGrantType.NEW;
         } else {
             return LockGrantType.WAIT;

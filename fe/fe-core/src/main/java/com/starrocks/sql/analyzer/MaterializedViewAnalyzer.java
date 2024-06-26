@@ -134,7 +134,8 @@ public class MaterializedViewAnalyzer {
                     Table.TableType.KUDU,
                     Table.TableType.DELTALAKE,
                     Table.TableType.VIEW,
-                    Table.TableType.HIVE_VIEW);
+                    Table.TableType.HIVE_VIEW,
+                    Table.TableType.ICEBERG_VIEW);
 
     public static void analyze(StatementBase stmt, ConnectContext session) {
         new MaterializedViewAnalyzerVisitor().visit(stmt, session);
@@ -247,7 +248,8 @@ public class MaterializedViewAnalyzer {
             // check query relation is select relation
             if (!(queryStatement.getQueryRelation() instanceof SelectRelation) &&
                     !(queryStatement.getQueryRelation() instanceof SetOperationRelation)) {
-                throw new SemanticException("Materialized view query statement only support select or set operation",
+                throw new SemanticException("Materialized view query statement only supports a single query block or " +
+                        "multiple query blocks in set operations",
                         queryStatement.getQueryRelation().getPos());
             }
 
@@ -485,27 +487,29 @@ public class MaterializedViewAnalyzer {
                     .map(Field::getName).collect(Collectors.toList());
             Scope queryScope = statement.getQueryStatement().getQueryRelation().getScope();
             List<Field> relationFields = queryScope.getRelationFields().getAllFields();
+            List<ColWithComment> colWithComments = statement.getColWithComments();
+            if (colWithComments != null) {
+                if (colWithComments.size() != relationFields.size()) {
+                    ErrorReport.reportSemanticException(ErrorCode.ERR_VIEW_WRONG_LIST);
+                }
+                for (ColWithComment colWithComment : colWithComments) {
+                    colWithComment.analyze();
+                }
+            }
             List<Column> mvColumns = Lists.newArrayList();
             for (int i = 0; i < relationFields.size(); ++i) {
                 Type type = AnalyzerUtils.transformTableColumnType(relationFields.get(i).getType(), false);
-                Column column = new Column(columnNames.get(i), type, relationFields.get(i).isNullable());
+                String colName = columnNames.get(i);
+                if (colWithComments != null) {
+                    colName = colWithComments.get(i).getColName();
+                }
+                Column column = new Column(colName, type, relationFields.get(i).isNullable());
+                if (colWithComments != null) {
+                    column.setComment(colWithComments.get(i).getComment());
+                }
                 // set default aggregate type, look comments in class Column
                 column.setAggregationType(AggregateType.NONE, false);
                 mvColumns.add(column);
-            }
-
-            if (statement.getColWithComments() != null) {
-                List<ColWithComment> colWithComments = statement.getColWithComments();
-                if (colWithComments.size() != mvColumns.size()) {
-                    ErrorReport.reportSemanticException(ErrorCode.ERR_VIEW_WRONG_LIST);
-                }
-                for (int i = 0; i < colWithComments.size(); ++i) {
-                    Column column = mvColumns.get(i);
-                    ColWithComment colWithComment = colWithComments.get(i);
-                    colWithComment.analyze();
-                    column.setName(colWithComment.getColName());
-                    column.setComment(colWithComment.getComment());
-                }
             }
 
             // set duplicate key, when sort key is set, it is dup key col.
@@ -661,7 +665,7 @@ public class MaterializedViewAnalyzer {
                 // e.g. partition by date_trunc('month', dt)
                 FunctionCallExpr functionCallExpr = (FunctionCallExpr) expressionPartitionDesc.getExpr();
                 String functionName = functionCallExpr.getFnName().getFunction();
-                if (!MaterializedViewPartitionFunctionChecker.FN_NAME_TO_PATTERN.containsKey(functionName)) {
+                if (!PartitionFunctionChecker.FN_NAME_TO_PATTERN.containsKey(functionName)) {
                     throw new SemanticException("Materialized view partition function " +
                             functionCallExpr.getFnName().getFunction() +
                             " is not supported yet.", functionCallExpr.getPos());
@@ -740,8 +744,8 @@ public class MaterializedViewAnalyzer {
             if (expr instanceof FunctionCallExpr) {
                 FunctionCallExpr functionCallExpr = ((FunctionCallExpr) expr);
                 String functionName = functionCallExpr.getFnName().getFunction();
-                MaterializedViewPartitionFunctionChecker.CheckPartitionFunction checkPartitionFunction =
-                        MaterializedViewPartitionFunctionChecker.FN_NAME_TO_PATTERN.get(functionName);
+                PartitionFunctionChecker.CheckPartitionFunction checkPartitionFunction =
+                        PartitionFunctionChecker.FN_NAME_TO_PATTERN.get(functionName);
                 if (checkPartitionFunction == null) {
                     throw new SemanticException("Materialized view partition function " +
                             functionName + " is not support: " + expr.toSqlWithoutTbl(), functionCallExpr.getPos());
@@ -785,7 +789,7 @@ public class MaterializedViewAnalyzer {
                         "must be base table partition column");
             } else if (partitionInfo instanceof RangePartitionInfo) {
                 RangePartitionInfo rangePartitionInfo = (RangePartitionInfo) partitionInfo;
-                List<Column> partitionColumns = rangePartitionInfo.getPartitionColumns();
+                List<Column> partitionColumns = rangePartitionInfo.getPartitionColumns(table.getIdToColumn());
                 if (partitionColumns.size() != 1) {
                     throw new SemanticException("Materialized view related base table partition columns " +
                             "only supports single column");
@@ -1045,9 +1049,8 @@ public class MaterializedViewAnalyzer {
                 throw new SemanticException(mvName.getTbl() + " is not async materialized view", mvName.getPos());
             }
 
-            AlterMVClauseAnalyzerVisitor alterTableClauseAnalyzerVisitor = new AlterMVClauseAnalyzerVisitor();
-            alterTableClauseAnalyzerVisitor.setTable(table);
-            alterTableClauseAnalyzerVisitor.analyze(statement.getAlterTableClause(), context);
+            AlterMVClauseAnalyzerVisitor alterTableClauseAnalyzerVisitor = new AlterMVClauseAnalyzerVisitor(table);
+            alterTableClauseAnalyzerVisitor.analyze(context, statement.getAlterTableClause());
             return null;
         }
 
@@ -1080,8 +1083,7 @@ public class MaterializedViewAnalyzer {
                 throw new SemanticException("Not support refresh by partition for single partition mv",
                         mvName.getPos());
             }
-            Column partitionColumn =
-                    ((RangePartitionInfo) table.getPartitionInfo()).getPartitionColumns().get(0);
+            Column partitionColumn = table.getPartitionInfo().getPartitionColumns(table.getIdToColumn()).get(0);
             if (partitionColumn.getType().isDateType()) {
                 validateDateTypePartition(statement.getPartitionRangeDesc());
             } else if (partitionColumn.getType().isIntegerType()) {

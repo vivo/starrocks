@@ -70,6 +70,7 @@ import com.starrocks.sql.ast.StatementBase;
 import com.starrocks.sql.ast.SystemVariable;
 import com.starrocks.sql.ast.UserIdentity;
 import com.starrocks.sql.ast.UserVariable;
+import com.starrocks.sql.optimizer.QueryMaterializationContext;
 import com.starrocks.sql.optimizer.dump.DumpInfo;
 import com.starrocks.sql.optimizer.dump.QueryDumpInfo;
 import com.starrocks.sql.parser.SqlParser;
@@ -143,8 +144,6 @@ public class ConnectContext {
     protected volatile boolean isKilled;
     // Db
     protected String currentDb = "";
-    // warehouse
-    protected String currentWarehouse;
     // `qualifiedUser` is the user used when the user establishes connection and authentication.
     // It is the real user used for this connection.
     // Different from the `currentUserIdentity` authentication user of execute as,
@@ -198,7 +197,7 @@ public class ConnectContext {
     // isLastStmt is true when original stmt is single stmt
     //    or current processing stmt is the last stmt for multi stmts
     // used to set mysql result package
-    protected boolean isLastStmt;
+    protected boolean isLastStmt = true;
     // set true when user dump query through HTTP
     protected boolean isHTTPQueryDump = false;
 
@@ -230,6 +229,10 @@ public class ConnectContext {
     private final Map<String, PrepareStmtContext> preparedStmtCtxs = Maps.newHashMap();
 
     private UUID sessionId;
+
+    // QueryMaterializationContext is different from MaterializationContext that it keeps the context during the query
+    // lifecycle instead of per materialized view.
+    private QueryMaterializationContext queryMVContext;
 
     public StmtExecutor getExecutor() {
         return executor;
@@ -781,6 +784,14 @@ public class ConnectContext {
         return this.sessionId;
     }
 
+    public QueryMaterializationContext getQueryMVContext() {
+        return queryMVContext;
+    }
+
+    public void setQueryMVContext(QueryMaterializationContext queryMVContext) {
+        this.queryMVContext = queryMVContext;
+    }
+
     // kill operation with no protect.
     public void kill(boolean killConnection, String cancelledMessage) {
         LOG.warn("kill query, {}, kill connection: {}",
@@ -804,8 +815,7 @@ public class ConnectContext {
                         break;
                     }
                 } catch (InterruptedException e) {
-                    LOG.warn(e);
-                    LOG.warn("sleep exception, ignore.");
+                    LOG.warn("sleep exception, ignore.", e);
                     break;
                 }
             }

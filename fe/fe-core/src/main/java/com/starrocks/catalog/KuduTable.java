@@ -24,7 +24,10 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -36,26 +39,35 @@ public class KuduTable extends Table {
     public static final Set<String> KUDU_INPUT_FORMATS = Sets.newHashSet(
             "org.apache.hadoop.hive.kudu.KuduInputFormat", "org.apache.kudu.mapreduce.KuduTableInputFormat");
     public static final String PARTITION_NULL_VALUE = "null";
-    private final String masterAddresses;
-    private final String catalogName;
-    private final String databaseName;
-    private final String tableName;
-    private final List<String> partColNames;
+    public static final String PARAMETER_KEY_KUDU_TABLE_NAME = "kudu.table_name";
+    private String masterAddresses;
+    private String catalogName;
+    private String databaseName;
+    private String tableName;
+    private Optional<String> kuduTableName;
+    private List<String> partColNames;
+    private Map<String, String> properties;
 
-    public KuduTable(String masterAddresses, String catalogName, String dbName, String tblName, List<Column> schema,
-                     List<String> partColNames) {
+    public KuduTable() {
+        super(TableType.KUDU);
+    }
+
+    public KuduTable(String masterAddresses, String catalogName, String dbName, String tblName, String kuduTableName,
+                     List<Column> schema, List<String> partColNames) {
         super(CONNECTOR_ID_GENERATOR.getNextId().asInt(), tblName, TableType.KUDU, schema);
         this.masterAddresses = masterAddresses;
         this.catalogName = catalogName;
         this.databaseName = dbName;
         this.tableName = tblName;
+        this.kuduTableName = Optional.ofNullable(kuduTableName);
         this.partColNames = partColNames;
     }
 
     public static KuduTable fromMetastoreTable(org.apache.hadoop.hive.metastore.api.Table table, String catalogName,
                                                List<Column> fullSchema, List<String> partColNames) {
+        String kuduTableName = table.getParameters().get(PARAMETER_KEY_KUDU_TABLE_NAME);
         return new KuduTable(StringUtils.EMPTY, catalogName, table.getDbName(), table.getTableName(),
-                fullSchema, partColNames);
+                kuduTableName, fullSchema, partColNames);
     }
 
     public String getMasterAddresses() {
@@ -73,6 +85,9 @@ public class KuduTable extends Table {
     public String getTableName() {
         return tableName;
     }
+    public Optional<String> getKuduTableName() {
+        return kuduTableName;
+    }
 
     @Override
     public List<Column> getPartitionColumns() {
@@ -82,6 +97,14 @@ public class KuduTable extends Table {
                     .collect(Collectors.toList());
         }
         return partitionColumns;
+    }
+
+    @Override
+    public Map<String, String> getProperties() {
+        if (properties == null) {
+            this.properties = new HashMap<>();
+        }
+        return properties;
     }
 
     @Override

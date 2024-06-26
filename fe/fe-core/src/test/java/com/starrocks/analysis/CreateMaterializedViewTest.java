@@ -61,6 +61,7 @@ import com.starrocks.sql.ast.DmlStmt;
 import com.starrocks.sql.ast.ExpressionPartitionDesc;
 import com.starrocks.sql.ast.RefreshSchemeClause;
 import com.starrocks.sql.ast.StatementBase;
+import com.starrocks.sql.common.MetaUtils;
 import com.starrocks.sql.optimizer.MvRewritePreprocessor;
 import com.starrocks.sql.optimizer.Utils;
 import com.starrocks.sql.parser.SqlParser;
@@ -392,10 +393,10 @@ public class CreateMaterializedViewTest {
             // test partition
             MaterializedView materializedView = getMaterializedViewChecked(sql);
             PartitionInfo partitionInfo = materializedView.getPartitionInfo();
-            Assert.assertEquals(1, partitionInfo.getPartitionColumns().size());
+            Assert.assertEquals(1, partitionInfo.getPartitionColumnsSize());
             Assert.assertTrue(partitionInfo instanceof ExpressionRangePartitionInfo);
             ExpressionRangePartitionInfo expressionRangePartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
-            Expr partitionExpr = expressionRangePartitionInfo.getPartitionExprs().get(0);
+            Expr partitionExpr = expressionRangePartitionInfo.getPartitionExprs(materializedView.getIdToColumn()).get(0);
             Assert.assertTrue(partitionExpr instanceof FunctionCallExpr);
             FunctionCallExpr partitionFunctionCallExpr = (FunctionCallExpr) partitionExpr;
             Assert.assertEquals("date_trunc", partitionFunctionCallExpr.getFnName().getFunction());
@@ -627,10 +628,10 @@ public class CreateMaterializedViewTest {
             // test partition
             MaterializedView materializedView = (MaterializedView) mv1;
             PartitionInfo partitionInfo = materializedView.getPartitionInfo();
-            Assert.assertEquals(1, partitionInfo.getPartitionColumns().size());
+            Assert.assertEquals(1, partitionInfo.getPartitionColumns(materializedView.getIdToColumn()).size());
             Assert.assertTrue(partitionInfo instanceof ExpressionRangePartitionInfo);
             ExpressionRangePartitionInfo expressionRangePartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
-            Expr partitionExpr = expressionRangePartitionInfo.getPartitionExprs().get(0);
+            Expr partitionExpr = expressionRangePartitionInfo.getPartitionExprs(materializedView.getIdToColumn()).get(0);
             Assert.assertTrue(partitionExpr instanceof SlotRef);
             SlotRef partitionSlotRef = (SlotRef) partitionExpr;
             Assert.assertEquals("s1", partitionSlotRef.getColumnName());
@@ -1489,7 +1490,7 @@ public class CreateMaterializedViewTest {
         try {
             UtFrameUtils.parseStmtWithNewParser(sql, connectContext);
         } catch (Exception e) {
-            Assert.assertTrue(e.getMessage().contains("Materialized view query statement only support select"));
+            Assert.assertTrue(e.getMessage().contains("Materialized view query statement only supports a single query blocks"));
         }
     }
 
@@ -2677,7 +2678,7 @@ public class CreateMaterializedViewTest {
         PartitionInfo partitionInfo = mv.getPartitionInfo();
         Assert.assertTrue(partitionInfo instanceof ExpressionRangePartitionInfo);
         ExpressionRangePartitionInfo expressionRangePartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
-        List<Expr> partitionExpr = expressionRangePartitionInfo.getPartitionExprs();
+        List<Expr> partitionExpr = expressionRangePartitionInfo.getPartitionExprs(table.getIdToColumn());
         Assert.assertEquals(1, partitionExpr.size());
         Assert.assertTrue(partitionExpr.get(0) instanceof SlotRef);
         SlotRef slotRef = (SlotRef) partitionExpr.get(0);
@@ -2734,8 +2735,8 @@ public class CreateMaterializedViewTest {
         PartitionInfo partitionInfo = mv.getPartitionInfo();
         Assert.assertTrue(partitionInfo instanceof ExpressionRangePartitionInfo);
         ExpressionRangePartitionInfo expressionRangePartitionInfo = (ExpressionRangePartitionInfo) partitionInfo;
-        Assert.assertEquals(1, expressionRangePartitionInfo.getPartitionColumns().size());
-        Column partColumn = expressionRangePartitionInfo.getPartitionColumns().get(0);
+        Assert.assertEquals(1, expressionRangePartitionInfo.getPartitionColumns(table.getIdToColumn()).size());
+        Column partColumn = expressionRangePartitionInfo.getPartitionColumns(table.getIdToColumn()).get(0);
         Assert.assertEquals("l_shipdate", partColumn.getName());
         Assert.assertTrue(partColumn.getType().isDate());
         starRocksAssert.dropMaterializedView("lineitem_supplier_hive_mv");
@@ -4395,6 +4396,28 @@ public class CreateMaterializedViewTest {
                                 ") " +
                                 "as select k1, v1, concat(k2, 'xxx') as k3 from (select * from tt1 where k1 > '19930101') tbl";
                         starRocksAssert.withMaterializedView(sql, () -> {});
+                    }
+                    {
+                        String sql = "create materialized view mv3 " +
+                                "partition by date_trunc('day', k1) " +
+                                "distributed by random " +
+                                "refresh async EVERY(INTERVAL 1 SECOND)\n" +
+                                "PROPERTIES (\n" +
+                                "\"replication_num\" = \"1\"\n" +
+                                ") " +
+                                "as select k1, v1, concat(k2, 'xxx') as k3 from (select * from tt1 where k1 > '19930101') tbl";
+                        Exception e = Assert.assertThrows(DdlException.class,
+                                () -> starRocksAssert.withMaterializedView(sql));
+                        Assert.assertEquals("Refresh schedule interval 1 is too small " +
+                                "which may cost a lot of memory/cpu resources to refresh the asynchronous " +
+                                "materialized view, please config an interval larger than " +
+                                "Config.materialized_view_min_refresh_interval(60s).", e.getMessage());
+
+                        // change the limitation
+                        int before = Config.materialized_view_min_refresh_interval;
+                        Config.materialized_view_min_refresh_interval = 1;
+                        starRocksAssert.withMaterializedView(sql);
+                        Config.materialized_view_min_refresh_interval = before;
                     }
                 });
     }

@@ -18,6 +18,8 @@
 #include "column/column_viewer.h"
 #include "column/nullable_column.h"
 #include "common/statusor.h"
+#include "common/utils.h"
+#include "config.h"
 #include "exec/tablet_sink.h"
 #include "exprs/expr_context.h"
 #include "gutil/strings/fastmem.h"
@@ -30,7 +32,7 @@
 #include "util/thrift_rpc_helper.h"
 #include "util/thrift_util.h"
 
-namespace starrocks::stream_load {
+namespace starrocks {
 
 class OlapTableSink; // forward declaration
 NodeChannel::NodeChannel(OlapTableSink* parent, int64_t node_id, bool is_incremental, ExprContext* where_clause)
@@ -99,6 +101,7 @@ Status NodeChannel::init(RuntimeState* state) {
         request->set_sender_id(_parent->_sender_id);
         request->set_eos(false);
         request->set_timeout_ms(_rpc_timeout_ms);
+        request->set_sink_id(_parent->_sink_id);
     }
     _rpc_request.set_allocated_id(&_parent->_load_id);
 
@@ -179,6 +182,7 @@ void NodeChannel::_open(int64_t index_id, RefCountClosure<PTabletWriterOpenResul
     request.set_is_incremental(incremental_open);
     request.set_sender_id(_parent->_sender_id);
     request.set_immutable_tablet_size(_parent->_automatic_bucket_size);
+    request.set_sink_id(_parent->_sink_id);
     for (auto& tablet : tablets) {
         auto ptablet = request.add_tablets();
         ptablet->CopyFrom(tablet);
@@ -543,6 +547,16 @@ Status NodeChannel::_filter_indexes_with_where_expr(Chunk* input, const std::vec
     return Status::OK();
 }
 
+template <typename T>
+void serialize_to_iobuf(const T& proto_obj, butil::IOBuf* iobuf) {
+    butil::IOBuf tmp_iobuf;
+    butil::IOBufAsZeroCopyOutputStream wrapper(&tmp_iobuf);
+    proto_obj.SerializeToZeroCopyStream(&wrapper);
+    size_t request_size = tmp_iobuf.size();
+    iobuf->append(&request_size, sizeof(request_size));
+    iobuf->append(tmp_iobuf);
+}
+
 Status NodeChannel::_send_request(bool eos, bool finished) {
     if (eos || finished) {
         if (_request_queue.empty()) {
@@ -626,9 +640,9 @@ Status NodeChannel::_send_request(bool eos, bool finished) {
             if (!res.ok()) {
                 return res.status();
             }
-            res.value()->tablet_writer_add_chunks(&_add_batch_closures[_current_request_index]->cntl, &request,
-                                                  &_add_batch_closures[_current_request_index]->result,
-                                                  _add_batch_closures[_current_request_index]);
+            auto closure = _add_batch_closures[_current_request_index];
+            serialize_to_iobuf<PTabletWriterAddChunksRequest>(request, &closure->cntl.request_attachment());
+            res.value()->tablet_writer_add_chunks_via_http(&closure->cntl, nullptr, &closure->result, closure);
             VLOG(2) << "NodeChannel::_send_request() issue a http rpc, request size = " << request.ByteSizeLong();
         } else {
             _stub->tablet_writer_add_chunks(&_add_batch_closures[_current_request_index]->cntl, &request,
@@ -646,9 +660,9 @@ Status NodeChannel::_send_request(bool eos, bool finished) {
             if (!res.ok()) {
                 return res.status();
             }
-            res.value()->tablet_writer_add_chunk(
-                    &_add_batch_closures[_current_request_index]->cntl, request.mutable_requests(0),
-                    &_add_batch_closures[_current_request_index]->result, _add_batch_closures[_current_request_index]);
+            auto closure = _add_batch_closures[_current_request_index];
+            serialize_to_iobuf<PTabletWriterAddChunkRequest>(request.requests(0), &closure->cntl.request_attachment());
+            res.value()->tablet_writer_add_chunk_via_http(&closure->cntl, nullptr, &closure->result, closure);
             VLOG(2) << "NodeChannel::_send_request() issue a http rpc, request size = " << request.ByteSizeLong();
         } else {
             _stub->tablet_writer_add_chunk(
@@ -957,6 +971,7 @@ void NodeChannel::_cancel(int64_t index_id, const Status& err_st) {
     request.set_index_id(index_id);
     request.set_sender_id(_parent->_sender_id);
     request.set_txn_id(_parent->_txn_id);
+    request.set_sink_id(_parent->_sink_id);
 
     auto closure = new RefCountClosure<PTabletWriterCancelResult>();
 
@@ -1034,4 +1049,4 @@ bool IndexChannel::has_intolerable_failure() {
     }
 }
 
-} // namespace starrocks::stream_load
+} // namespace starrocks
